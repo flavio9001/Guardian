@@ -1,17 +1,9 @@
 <?php
 declare(strict_types=1);
 
-// Restringe CORS ao proprio dominio do sistema
-$allowed_origin = 'https://guardian.reduzatelecom.com';
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($origin === $allowed_origin) {
-    header('Access-Control-Allow-Origin: ' . $allowed_origin);
-}
+header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: Content-Type, X-User-Id');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Referrer-Policy: strict-origin-when-cross-origin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
@@ -25,7 +17,7 @@ $weekdays = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado
 
 function config(): array {
     static $config = null;
-    if ($config === null) $config = require dirname(__DIR__) . '/private/db_config.php';
+    if ($config === null) $config = require __DIR__ . '/db_config.php';
     return $config;
 }
 
@@ -93,23 +85,15 @@ function slug_user(string $name): string {
 }
 
 function create_schema(): void {
-    // database.sql deve estar fora do public_html em /private/database.sql
-    $sqlFile = dirname(__DIR__) . '/private/database.sql';
-    if (!file_exists($sqlFile)) return; // schema ja criado, nao faz nada
-    $sql = file_get_contents($sqlFile);
-    if (!$sql) return;
+    $sql = file_get_contents(__DIR__ . '/database.sql');
+    if (!$sql) fail(500, 'Arquivo database.sql não encontrado.');
     pdo()->exec($sql);
 }
 
 function ensure_schema(): void {
     static $done = false;
     if ($done) return;
-    // Verifica se as tabelas ja existem antes de tentar criar
-    try {
-        pdo()->query('SELECT 1 FROM sol_people LIMIT 1');
-    } catch (\PDOException $e) {
-        create_schema();
-    }
+    create_schema();
     seed_if_empty();
     sync_rooms();
     $done = true;
@@ -241,10 +225,7 @@ function save_person(array $person): void {
         ':availability_json' => json_encode_safe($person['availability'] ?? []),
         ':period' => $person['period'] ?? '',
         ':summary' => $person['summary'] ?? '',
-        ':photo' => (function($photo) {
-            if (strlen($photo) > 2800000) fail(413, 'Foto muito grande. Limite: 2 MB.');
-            return $photo;
-        })($person['photo'] ?? ''),
+        ':photo' => $person['photo'] ?? '',
         ':username' => $person['username'] ?: slug_user($person['name']),
         ':password_hash' => $passwordHash,
         ':user_type' => $person['userType'] ?? 'colaborador',
@@ -389,30 +370,14 @@ if ($method === 'GET' && $path === 'people-public') {
 }
 
 if ($method === 'POST' && $path === 'login') {
-    // Rate limiting simples: bloqueia IP apos 10 tentativas em 5 minutos
-    $ip = preg_replace('/[^a-f0-9:.]/', '', $_SERVER['REMOTE_ADDR'] ?? '');
-    $lock_file = sys_get_temp_dir() . '/sol_login_' . md5($ip) . '.json';
-    $attempts = file_exists($lock_file) ? json_decode(file_get_contents($lock_file), true) : ['count' => 0, 'time' => time()];
-    if (time() - $attempts['time'] > 300) $attempts = ['count' => 0, 'time' => time()];
-    if ($attempts['count'] >= 10) fail(429, 'Muitas tentativas. Aguarde 5 minutos.');
     $body = body_json();
     $stmt = pdo()->prepare('SELECT * FROM sol_people WHERE id = ? AND username = ? AND active = 1');
     $stmt->execute([$body['personId'] ?? '', $body['username'] ?? '']);
     $row = $stmt->fetch();
-    if (!$row) {
-        $attempts['count']++;
-        file_put_contents($lock_file, json_encode($attempts));
-        fail(401, 'Usuário ou senha inválidos');
-    }
+    if (!$row) fail(401, 'Usuário ou senha inválidos');
     $hash = $row['password_hash'];
     $password = (string) ($body['password'] ?? '');
-    if (!password_verify($password, $hash) && $password !== $hash) {
-        $attempts['count']++;
-        file_put_contents($lock_file, json_encode($attempts));
-        fail(401, 'Usuário ou senha inválidos');
-    }
-    // Login OK — reseta contador
-    @unlink($lock_file);
+    if (!password_verify($password, $hash) && $password !== $hash) fail(401, 'Usuário ou senha inválidos');
     json_response(row_to_person($row));
 }
 
@@ -501,5 +466,4 @@ if ($method === 'POST' && $path === 'chats/message') {
 }
 
 fail(404, 'Rota não encontrada');
-
 

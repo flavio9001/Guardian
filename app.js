@@ -319,7 +319,7 @@ function renderPeople() {
           <button class="ghost small" data-person="${person.id}" type="button">Resumo</button>
           <button class="ghost small gestor-only" data-edit="${person.id}" type="button">Editar</button>
           ${person.phones?.[0] ? `<a class="action-link" href="tel:${person.phones[0]}">Ligar</a>` : ""}
-          ${person.whatsapp ? `<a class="action-link whatsapp-link" href="${whatsappHref(person.whatsapp)}" target="_blank" rel="noreferrer">WhatsApp</a>` : ""}
+          ${person.whatsapp ? `<a class="action-link" target="_blank" rel="noreferrer" href="https://wa.me/55${normalizePhone(person.whatsapp)}">WhatsApp</a>` : ""}
         </div>
       </div>
     </article>
@@ -404,16 +404,6 @@ function renderChat() {
   container.scrollTop = container.scrollHeight;
 }
 
-// Gera o href correto para WhatsApp: intent:// no Android (APK), https://wa.me/ nos demais
-function whatsappHref(whatsapp) {
-  const phone = normalizePhone(whatsapp);
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  if (isAndroid) {
-    return `intent://send?phone=+55${phone}#Intent;scheme=whatsapp;package=com.whatsapp;end`;
-  }
-  return `https://wa.me/55${phone}`;
-}
-
 function openPerson(id) {
   const person = personById(id);
   if (!person) return;
@@ -433,7 +423,7 @@ function openPerson(id) {
       <div class="detail-item"><span>Resumo</span><p>${escapeHtml(person.summary || "Sem resumo cadastrado")}</p></div>
       <div class="dialog-actions">
         ${phones.map((phone) => `<a class="action-link" href="tel:${phone}">Ligar ${phone}</a>`).join("")}
-        ${person.whatsapp ? `<a class="action-link whatsapp-link" href="${whatsappHref(person.whatsapp)}" target="_blank" rel="noreferrer">Mensagem WhatsApp</a>` : ""}
+        ${person.whatsapp ? `<a class="action-link" target="_blank" rel="noreferrer" href="https://wa.me/55${normalizePhone(person.whatsapp)}">Mensagem WhatsApp</a>` : ""}
         <button class="ghost gestor-only" data-edit="${person.id}" type="button">Editar cadastro</button>
         <button class="ghost" data-export-summary="${person.id}" type="button">Exportar JPG</button>
       </div>
@@ -461,7 +451,6 @@ function editPerson(id) {
   $("#periodInput").value = person.period || "";
   $("#usernameInput").value = person.username || slugUser(person.name);
   $("#passwordInput").value = "";
-  $("#passwordInput").placeholder = "Deixe em branco para não alterar";
   $("#userTypeInput").value = person.userType || "colaborador";
   $("#addressInput").value = person.address || "";
   $("#availabilityInput").value = (person.availability || []).map((day) => weekdayLabels[day] || day).join(", ");
@@ -589,11 +578,121 @@ function latestMessageStamp() {
 }
 
 function notifyNewMessage() {
-  const toast = $("#toast");
-  toast.textContent = "Nova mensagem recebida";
-  toast.classList.add("show");
+  // Toca o som
   playMessageSound();
-  setTimeout(() => toast.classList.remove("show"), 3200);
+
+  // Descobre a última mensagem nova
+  let latestMsg = null;
+  let latestRoom = null;
+  let latestAt = 0;
+  for (const [roomId, msgs] of Object.entries(state.chats || {})) {
+    for (const m of (msgs || [])) {
+      if ((m.at || 0) > latestAt && m.authorId !== currentUser?.id) {
+        latestAt = m.at || 0;
+        latestMsg = m;
+        latestRoom = roomId;
+      }
+    }
+  }
+
+  const roomName = state.chatRooms?.find(r => r.id === latestRoom)?.name || "Chat";
+  const authorName = latestMsg?.authorName || "Alguém";
+  const msgText = latestMsg?.text || "Nova mensagem";
+
+  // Remove pop-up anterior se existir
+  const old = document.getElementById("chatPopup");
+  if (old) old.remove();
+
+  // Cria o pop-up
+  const popup = document.createElement("div");
+  popup.id = "chatPopup";
+  popup.innerHTML = `
+    <div id="chatPopupInner">
+      <div id="chatPopupIcon">💬</div>
+      <div id="chatPopupBody">
+        <div id="chatPopupRoom">${escapeHtml(roomName)}</div>
+        <div id="chatPopupAuthor">${escapeHtml(authorName)}</div>
+        <div id="chatPopupText">${escapeHtml(msgText.slice(0, 80))}${msgText.length > 80 ? "…" : ""}</div>
+      </div>
+      <button id="chatPopupClose" type="button" aria-label="Fechar">✕</button>
+    </div>
+  `;
+
+  // Estilos inline (não dependem do CSS externo)
+  Object.assign(popup.style, {
+    position: "fixed", top: "16px", left: "50%", transform: "translateX(-50%)",
+    zIndex: "99999", width: "min(96vw, 420px)", cursor: "pointer",
+    animation: "chatPopupIn .28s cubic-bezier(.22,1,.36,1) both"
+  });
+  const inner = popup.querySelector("#chatPopupInner");
+  Object.assign(inner.style, {
+    display: "flex", alignItems: "center", gap: "12px",
+    background: "#1a2b3c", color: "#fff",
+    borderRadius: "16px", padding: "14px 16px",
+    boxShadow: "0 8px 32px rgba(0,0,0,.45)",
+    borderLeft: "5px solid #25d366"
+  });
+  Object.assign(popup.querySelector("#chatPopupIcon").style, {
+    fontSize: "28px", lineHeight: "1", flexShrink: "0"
+  });
+  Object.assign(popup.querySelector("#chatPopupBody").style, {
+    flex: "1", minWidth: "0"
+  });
+  Object.assign(popup.querySelector("#chatPopupRoom").style, {
+    fontSize: "11px", fontWeight: "700", color: "#25d366",
+    textTransform: "uppercase", letterSpacing: ".6px", marginBottom: "2px"
+  });
+  Object.assign(popup.querySelector("#chatPopupAuthor").style, {
+    fontSize: "14px", fontWeight: "700", color: "#fff", marginBottom: "2px"
+  });
+  Object.assign(popup.querySelector("#chatPopupText").style, {
+    fontSize: "13px", color: "#c8d8e8",
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
+  });
+  const closeBtn = popup.querySelector("#chatPopupClose");
+  Object.assign(closeBtn.style, {
+    background: "none", border: "none", color: "#8aa", fontSize: "16px",
+    cursor: "pointer", padding: "4px 6px", flexShrink: "0", lineHeight: "1"
+  });
+
+  // Injectar animação CSS se ainda não existir
+  if (!document.getElementById("chatPopupStyle")) {
+    const style = document.createElement("style");
+    style.id = "chatPopupStyle";
+    style.textContent = `
+      @keyframes chatPopupIn {
+        from { opacity:0; transform:translateX(-50%) translateY(-18px) scale(.94); }
+        to   { opacity:1; transform:translateX(-50%) translateY(0)     scale(1);   }
+      }
+      @keyframes chatPopupOut {
+        to   { opacity:0; transform:translateX(-50%) translateY(-14px) scale(.94); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const dismiss = () => {
+    popup.style.animation = "chatPopupOut .22s ease forwards";
+    setTimeout(() => popup.remove(), 230);
+  };
+
+  // Clique no pop-up → vai ao chat e seleciona a sala
+  popup.addEventListener("click", (e) => {
+    if (e.target === closeBtn || closeBtn.contains(e.target)) { dismiss(); return; }
+    if (latestRoom) {
+      selectedChatRoom = latestRoom;
+      navTo("chat");
+      renderChat();
+    }
+    dismiss();
+  });
+
+  closeBtn.addEventListener("click", (e) => { e.stopPropagation(); dismiss(); });
+
+  document.body.appendChild(popup);
+
+  // Auto-dismiss após 6s
+  setTimeout(dismiss, 6000);
 }
 
 function playMessageSound() {
@@ -661,255 +760,177 @@ function exportSummaryJpg(id = $("#personId").value) {
   if (!person) return alert("Selecione ou abra um funcionário para exportar o resumo.");
   const group = groupById(person.groupId);
 
-  // 18 x 12,5 cm a 150 dpi → 1063 x 740 px
-  const W = 1063;
-  const H = 740;
-  const PAD = 36;
-  const HEADER_H = 90;
-  const FOOTER_H = 44;
-  const PHOTO_W = 220;
-  const PHOTO_H = H - HEADER_H - FOOTER_H - PAD * 2;
-  const COL_X = PAD + PHOTO_W + 28; // início da coluna de dados
-  const COL_W = W - COL_X - PAD;    // largura disponível para texto
-
+  // Dimensões cédula RG Brasil: 85.6 × 54 mm a 300 dpi → 1012 × 638 px
+  const W = 1012, H = 638;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
 
-  // ── Fundo ──────────────────────────────────────────────────────────────────
-  ctx.fillStyle = "#f5f7fa";
+  // Fundo branco
+  ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, W, H);
 
-  // ── Cabeçalho ──────────────────────────────────────────────────────────────
+  // Faixa superior azul
+  const HEADER_H = 90;
   ctx.fillStyle = "#062b51";
   ctx.fillRect(0, 0, W, HEADER_H);
 
-  // Logo / título
+  // Logo SOL + subtítulo no cabeçalho
   ctx.fillStyle = "#f4b400";
   ctx.font = "bold 30px Arial";
-  ctx.fillText("SOL Equipes", PAD, 38);
+  ctx.fillText("SOL Equipes", 22, 38);
   ctx.fillStyle = "#ffffff";
   ctx.font = "15px Arial";
-  ctx.fillText("Sistema de Gestão de Equipes · Reduz Telecom", PAD, 62);
+  ctx.fillText("Segurança · Operação · Logística", 22, 62);
 
-  // Cor do grupo no canto direito do cabeçalho
-  if (group?.color) {
-    ctx.fillStyle = group.color;
-    ctx.fillRect(W - 12, 0, 12, HEADER_H);
-  }
-
-  // ── Área de conteúdo ────────────────────────────────────────────────────────
-  const contentY = HEADER_H + PAD;
-
-  // Caixa da foto
-  const photoX = PAD;
-  const photoY = contentY;
-  ctx.fillStyle = "#dde3ec";
-  ctx.fillRect(photoX, photoY, PHOTO_W, PHOTO_H);
-
-  // Linha amarela decorativa abaixo da foto
+  // Linha dourada decorativa sob o cabeçalho
   ctx.fillStyle = "#f4b400";
-  ctx.fillRect(photoX, photoY + PHOTO_H, PHOTO_W, 5);
+  ctx.fillRect(0, HEADER_H, W, 4);
 
-  // Nome do grupo sobre a foto (tag inferior)
-  ctx.fillStyle = "rgba(6,43,81,0.82)";
-  ctx.fillRect(photoX, photoY + PHOTO_H - 36, PHOTO_W, 36);
-  ctx.fillStyle = "#f4b400";
-  ctx.font = "bold 16px Arial";
-  const groupLabel = group?.name || "Sem grupo";
-  ctx.fillText(groupLabel, photoX + 10, photoY + PHOTO_H - 11);
+  // ── Área da foto (esquerda) ──────────────────────────────
+  const PHOTO_X = 22, PHOTO_Y = HEADER_H + 18;
+  const PHOTO_W = 160, PHOTO_H = 200;
 
-  // Desenha a foto se existir
-  const drawContent = () => {
-    // ── Coluna direita ────────────────────────────────────────────────────────
+  const drawPhotoFrame = () => {
+    // Borda azul
+    ctx.strokeStyle = "#062b51";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H);
+    // Fundo cinza claro caso sem foto
+    ctx.fillStyle = "#e8edf2";
+    ctx.fillRect(PHOTO_X + 2, PHOTO_Y + 2, PHOTO_W - 4, PHOTO_H - 4);
+    ctx.fillStyle = "#8a9baa";
+    ctx.font = "13px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("Sem foto", PHOTO_X + PHOTO_W / 2, PHOTO_Y + PHOTO_H / 2 + 5);
+    ctx.textAlign = "left";
+  };
+
+  const renderCard = () => {
+    // ── Dados textuais (direita da foto) ─────────────────
+    const TX = PHOTO_X + PHOTO_W + 22;
+    const TW = W - TX - 20;
 
     // Nome
     ctx.fillStyle = "#062b51";
-    ctx.font = "bold 30px Arial";
-    ctx.fillText(clipText(ctx, person.name, COL_W), COL_X, contentY + 32);
+    ctx.font = "bold 26px Arial";
+    const nameY = PHOTO_Y + 26;
+    wrapTextReturn(ctx, person.name, TX, nameY, TW, 30);
 
     // Cargo
     ctx.fillStyle = "#f4b400";
-    ctx.fillRect(COL_X, contentY + 42, 48, 4);
-    ctx.fillStyle = "#4a5568";
-    ctx.font = "17px Arial";
-    ctx.fillText(clipText(ctx, person.role, COL_W), COL_X, contentY + 68);
+    ctx.font = "bold 17px Arial";
+    ctx.fillText(person.role || "", TX, nameY + 58);
 
-    // Separador
-    ctx.fillStyle = "#dde3ec";
-    ctx.fillRect(COL_X, contentY + 80, COL_W, 1);
+    // Linha separadora fina
+    ctx.fillStyle = "#e0e0e0";
+    ctx.fillRect(TX, nameY + 68, TW, 1);
 
-    // Dados em grade 2 colunas
-    const fields = [
-      ["Telefone",       (person.phones || []).join(", ") || "Não informado"],
-      ["WhatsApp",       person.whatsapp || "Não informado"],
-      ["E-mail",         person.email || "Não informado"],
-      ["Endereço",       person.address || "Não informado"],
-      ["Disponibilidade",(person.availability || []).map((d) => weekdayLabels[d] || d).join(", ")],
-      ["Período",        person.period || "Não informado"],
-      ["Perfil",         person.userType === "gestor" ? "Gestor" : "Colaborador"],
-      ["Status",         person.active ? "Ativo" : "Inativo"],
+    // Dados em grade
+    ctx.fillStyle = "#333333";
+    ctx.font = "15px Arial";
+    const info = [
+      ["Grupo",    group?.name || "Sem grupo"],
+      ["Tel",      (person.phones || []).join(", ") || "—"],
+      ["WhatsApp", person.whatsapp || "—"],
+      ["E-mail",   person.email || "—"],
+      ["Período",  person.period || "—"],
+      ["Disponib.",`${(person.availability || []).map(d => weekdayLabels[d] || d).join(", ") || "—"}`]
     ];
-
-    const FIELD_COL_W = Math.floor(COL_W / 2) - 8;
-    const FIELD_START_Y = contentY + 102;
-    const ROW_H = 52;
-
-    fields.forEach(([label, value], i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const fx = COL_X + col * (FIELD_COL_W + 16);
-      const fy = FIELD_START_Y + row * ROW_H;
-
-      // Fundo da célula
-      ctx.fillStyle = "#ffffff";
-      roundRect(ctx, fx, fy, FIELD_COL_W, ROW_H - 6, 6);
-      ctx.fill();
-
-      // Label
-      ctx.fillStyle = "#8a96a8";
-      ctx.font = "bold 12px Arial";
-      ctx.fillText(label.toUpperCase(), fx + 10, fy + 18);
-
-      // Valor
-      ctx.fillStyle = "#1a2535";
+    info.forEach(([label, value], i) => {
+      const y = nameY + 90 + i * 26;
+      ctx.fillStyle = "#888888";
+      ctx.font = "bold 13px Arial";
+      ctx.fillText(label.toUpperCase(), TX, y);
+      ctx.fillStyle = "#222222";
       ctx.font = "15px Arial";
-      ctx.fillText(clipText(ctx, value, FIELD_COL_W - 20), fx + 10, fy + 38);
+      const labelW = ctx.measureText(label.toUpperCase() + "  ").width + 8;
+      // Trunca valor se muito largo
+      let val = value;
+      while (val.length > 2 && ctx.measureText(val).width > TW - labelW) val = val.slice(0, -1);
+      if (val !== value) val += "…";
+      ctx.fillText(val, TX + labelW, y);
     });
 
-    // Resumo / observações
-    const summaryY = FIELD_START_Y + Math.ceil(fields.length / 2) * ROW_H + 8;
-    const summaryH = H - FOOTER_H - summaryY - 8;
-    if (summaryH > 30 && person.summary) {
-      ctx.fillStyle = "#ffffff";
-      roundRect(ctx, COL_X, summaryY, COL_W, summaryH, 6);
-      ctx.fill();
-      ctx.fillStyle = "#8a96a8";
-      ctx.font = "bold 12px Arial";
-      ctx.fillText("RESUMO / OBSERVAÇÕES", COL_X + 10, summaryY + 18);
-      ctx.fillStyle = "#1a2535";
-      ctx.font = "14px Arial";
-      wrapText(ctx, person.summary, COL_X + 10, summaryY + 36, COL_W - 20, 20, summaryH - 40);
-    }
-
-    // ── Rodapé ─────────────────────────────────────────────────────────────────
+    // ── Faixa inferior com resumo ─────────────────────────
+    const FOOTER_Y = PHOTO_Y + PHOTO_H + 20;
+    ctx.fillStyle = "#f5f7fa";
+    ctx.fillRect(0, FOOTER_Y, W, H - FOOTER_Y);
     ctx.fillStyle = "#062b51";
-    ctx.fillRect(0, H - FOOTER_H, W, FOOTER_H);
-    ctx.fillStyle = "#8a9fc0";
-    ctx.font = "13px Arial";
-    const stamp = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
-    ctx.fillText(`Emitido em ${stamp}`, PAD, H - FOOTER_H + 28);
-    ctx.fillStyle = "#f4b400";
-    ctx.font = "bold 13px Arial";
-    const vipLabel = person.isVip ? "· VIP" : "";
-    ctx.fillText(`${person.name} ${vipLabel}`, W - PAD - ctx.measureText(`${person.name} ${vipLabel}`).width - 2, H - FOOTER_H + 28);
+    ctx.fillRect(0, FOOTER_Y, W, 3);
 
-    // ── Exportar ───────────────────────────────────────────────────────────────
-    canvas.toBlob(async (blob) => {
-      const filename = `resumo-${slugUser(person.name)}.jpg`;
-      if (
-        navigator.share &&
-        navigator.canShare &&
-        navigator.canShare({ files: [new File([blob], filename, { type: "image/jpeg" })] })
-      ) {
-        try {
-          await navigator.share({ files: [new File([blob], filename, { type: "image/jpeg" })], title: filename });
-          return;
-        } catch (err) {
-          if (err.name === "AbortError") return;
-        }
-      }
-      const url = URL.createObjectURL(blob);
-      const newTab = window.open(url, "_blank");
-      if (!newTab) {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = filename;
-        link.click();
-      }
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    }, "image/jpeg", 0.92);
+    ctx.fillStyle = "#555555";
+    ctx.font = "italic 14px Arial";
+    wrapTextReturn(ctx, person.summary || "Sem resumo cadastrado.", 22, FOOTER_Y + 22, W - 44, 20);
+
+    // ── Rodapé com data ───────────────────────────────────
+    ctx.fillStyle = "#062b51";
+    ctx.fillRect(0, H - 28, W, 28);
+    ctx.fillStyle = "#aaaaaa";
+    ctx.font = "12px Arial";
+    ctx.textAlign = "right";
+    ctx.fillText(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`, W - 16, H - 10);
+    ctx.textAlign = "left";
+
+    // ── Download ──────────────────────────────────────────
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/jpeg", 0.95);
+    link.download = `cracha-${slugUser(person.name)}.jpg`;
+    link.click();
   };
 
+  // Tenta carregar a foto
   if (person.photo) {
     const img = new Image();
     img.onload = () => {
-      // Crop centralizado na caixa da foto
-      const scale = Math.max(PHOTO_W / img.width, PHOTO_H / img.height);
-      const sw = PHOTO_W / scale;
-      const sh = PHOTO_H / scale;
-      const sx = (img.width - sw) / 2;
-      const sy = (img.height - sh) / 2;
-      ctx.drawImage(img, sx, sy, sw, sh, photoX, photoY, PHOTO_W, PHOTO_H);
-      // Redesenha a tag do grupo sobre a foto (pois a imagem cobriu)
-      ctx.fillStyle = "rgba(6,43,81,0.82)";
-      ctx.fillRect(photoX, photoY + PHOTO_H - 36, PHOTO_W, 36);
-      ctx.fillStyle = "#f4b400";
-      ctx.font = "bold 16px Arial";
-      ctx.fillText(groupLabel, photoX + 10, photoY + PHOTO_H - 11);
-      drawContent();
+      // Clip circular não: recorte retangular preenchendo o frame
+      ctx.drawImage(img, PHOTO_X + 2, PHOTO_Y + 2, PHOTO_W - 4, PHOTO_H - 4);
+      ctx.strokeStyle = "#062b51";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H);
+      renderCard();
     };
-    img.onerror = drawContent;
+    img.onerror = () => { drawPhotoFrame(); renderCard(); };
     img.src = person.photo;
   } else {
-    // Sem foto: iniciais centralizadas na caixa
-    const cx = photoX + PHOTO_W / 2;
-    const cy = photoY + PHOTO_H / 2 - 20;
-    ctx.fillStyle = "#c5cfe0";
-    ctx.beginPath();
-    ctx.arc(cx, cy, 64, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#062b51";
-    ctx.font = "bold 52px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(initials(person.name), cx, cy + 18);
-    ctx.textAlign = "left";
-    drawContent();
+    drawPhotoFrame();
+    renderCard();
   }
 }
 
-// Corta texto com reticências se ultrapassar maxWidth
-function clipText(ctx, text = "", maxWidth) {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  let cut = text;
-  while (cut.length > 0 && ctx.measureText(cut + "…").width > maxWidth) cut = cut.slice(0, -1);
-  return cut + "…";
+// wrapText com retorno de Y final (não quebra a assinatura antiga)
+function wrapTextReturn(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = (text || "").split(" ");
+  let line = "";
+  for (const word of words) {
+    const test = line + word + " ";
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line.trim(), x, y);
+      line = word + " ";
+      y += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line.trim()) ctx.fillText(line.trim(), x, y);
+  return y;
 }
 
-// Retângulo com bordas arredondadas
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
-
-function wrapText(ctx, text, x, y, maxWidth, lineHeight, maxHeight) {
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   const words = text.split(" ");
   let line = "";
-  let currentY = y;
-  const limitY = maxHeight ? y + maxHeight : Infinity;
   words.forEach((word) => {
     const test = `${line}${word} `;
     if (ctx.measureText(test).width > maxWidth) {
-      if (currentY + lineHeight <= limitY) {
-        ctx.fillText(line, x, currentY);
-        line = `${word} `;
-        currentY += lineHeight;
-      }
+      ctx.fillText(line, x, y);
+      line = `${word} `;
+      y += lineHeight;
     } else {
       line = test;
     }
   });
-  if (currentY <= limitY) ctx.fillText(line, x, currentY);
+  ctx.fillText(line, x, y);
 }
 
 function wireEvents() {
