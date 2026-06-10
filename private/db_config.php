@@ -1,10 +1,11 @@
 <?php
-// Este arquivo deve ficar em: /home/u123456789/private/db_config.php
-// (FORA do public_html — nunca acessível pelo navegador)
+declare(strict_types=1);
+
 return [
-    'host'     => 'localhost',
-    'database' => 'SEU_BANCO_AQUI',
-    'username' => 'SEU_USUARIO_AQUI',
-    'password' => 'SUA_SENHA_AQUI',
-    'charset'  => 'utf8mb4',
+    'host' => 'localhost',
+    'database' => 'u104148794_sol2026',
+    'username' => 'u104148794_rochabill',
+    'password' => 'Flafrl@1',
+    'charset' => 'utf8mb4',
 ];
+
